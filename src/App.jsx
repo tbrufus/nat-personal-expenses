@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import {
   Upload, PiggyBank, Receipt, Settings2, Trash2, Plus, X, Check,
   AlertCircle, ChevronRight, ChevronLeft, Search, Download, FileSpreadsheet,
-  Pencil, ArrowRight, Users, Stamp, LogOut, Lock, BarChart3
+  Pencil, ArrowRight, Users, Stamp, LogOut, Lock, BarChart3, Tags
 } from "lucide-react";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
@@ -258,6 +258,8 @@ const Styles = () => (
 
     table.hbl-table { width: 100%; border-collapse: collapse; font-size: 13px; }
     table.hbl-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-dim); font-weight: 500; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+    table.hbl-table th.hbl-th-sort { cursor: pointer; user-select: none; white-space: nowrap; }
+    table.hbl-table th.hbl-th-sort:hover { color: var(--gold-bright); }
     table.hbl-table td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
     table.hbl-table tr:hover td { background: rgba(255,255,255,0.02); }
     .hbl-amt-out { color: var(--coral); font-family: var(--mono-font); }
@@ -582,6 +584,9 @@ function LedgerApp({ user }) {
           <button className={`hbl-nav-tab ${tab === "import" ? "active" : ""}`} onClick={() => setTab("import")}>
             <Upload size={15} /> Import
           </button>
+          <button className={`hbl-nav-tab ${tab === "categories" ? "active" : ""}`} onClick={() => setTab("categories")}>
+            <Tags size={15} /> Categories
+          </button>
           <button className={`hbl-nav-tab ${tab === "budgets" ? "active" : ""}`} onClick={() => setTab("budgets")}>
             <Settings2 size={15} /> Budgets
           </button>
@@ -616,11 +621,17 @@ function LedgerApp({ user }) {
             requestAddCategory={requestAddCategory} requestAddSubcategory={requestAddSubcategory}
           />
         )}
-        {tab === "budgets" && (
-          <BudgetsView
+        {tab === "categories" && (
+          <CategoriesView
             categories={categories} budgets={budgets} transactions={transactions}
             persistConfig={persistConfig} persistTransactions={persistTransactions}
             requestAddSubcategory={requestAddSubcategory}
+          />
+        )}
+        {tab === "budgets" && (
+          <BudgetsView
+            categories={categories} budgets={budgets} transactions={transactions}
+            persistConfig={persistConfig}
           />
         )}
       </div>
@@ -842,6 +853,25 @@ function SummaryView({ transactions, categories, budgets }) {
       .sort((a, b) => b.spent - a.spent);
   }, [categories, byCategory, budgets, monthsForBudget]);
 
+  const [expandedCat, setExpandedCat] = useState(null);
+
+  const subBreakdownByCategory = useMemo(() => {
+    const map = {};
+    for (const c of categories) {
+      const txForCat = activeTx.filter((t) => t.category === c.name && t.amount > 0);
+      const bySub = {};
+      for (const t of txForCat) {
+        if (!t.subcategory || !t.subcategory.trim()) continue;
+        bySub[t.subcategory] = (bySub[t.subcategory] || 0) + t.amount;
+      }
+      const entries = Object.entries(bySub).sort((a, b) => b[1] - a[1]);
+      const total = txForCat.reduce((s, t) => s + t.amount, 0);
+      const other = total - entries.reduce((s, [, v]) => s + v, 0);
+      map[c.name] = { entries, other };
+    }
+    return map;
+  }, [categories, activeTx]);
+
   const monthlyBreakdown = useMemo(() => {
     if (mode !== "year") return [];
     return Array.from({ length: 12 }, (_, i) => {
@@ -924,15 +954,46 @@ function SummaryView({ transactions, categories, budgets }) {
               <tbody>
                 {categoryRows.map((r) => {
                   const variance = r.budget - r.spent;
+                  const breakdown = subBreakdownByCategory[r.name] || { entries: [], other: 0 };
+                  const hasSubs = breakdown.entries.length > 0;
+                  const isExpanded = expandedCat === r.name;
                   return (
-                    <tr key={r.name}>
-                      <td><span className="hbl-dot" style={{ background: r.color, marginRight: 7 }} />{r.name}</td>
-                      <td className="hbl-mono" style={{ textAlign: "right" }}>{fmtMoney(r.spent)}</td>
-                      <td className="hbl-mono" style={{ textAlign: "right", color: "var(--ink-dim)" }}>{r.budget > 0 ? fmtMoney(r.budget) : "—"}</td>
-                      <td className={`hbl-mono ${r.budget > 0 ? (variance < 0 ? "hbl-amt-out" : "hbl-amt-in") : ""}`} style={{ textAlign: "right" }}>
-                        {r.budget > 0 ? `${variance < 0 ? "-" : "+"}${fmtMoney(Math.abs(variance))}` : "—"}
-                      </td>
-                    </tr>
+                    <Fragment key={r.name}>
+                      <tr>
+                        <td>
+                          {hasSubs && (
+                            <button
+                              className="hbl-subtoggle" style={{ marginRight: 4 }}
+                              onClick={() => setExpandedCat(isExpanded ? null : r.name)}
+                            >
+                              <ChevronRight size={12} style={{ transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
+                            </button>
+                          )}
+                          <span className="hbl-dot" style={{ background: r.color, marginRight: 7 }} />{r.name}
+                        </td>
+                        <td className="hbl-mono" style={{ textAlign: "right" }}>{fmtMoney(r.spent)}</td>
+                        <td className="hbl-mono" style={{ textAlign: "right", color: "var(--ink-dim)" }}>{r.budget > 0 ? fmtMoney(r.budget) : "—"}</td>
+                        <td className={`hbl-mono ${r.budget > 0 ? (variance < 0 ? "hbl-amt-out" : "hbl-amt-in") : ""}`} style={{ textAlign: "right" }}>
+                          {r.budget > 0 ? `${variance < 0 ? "-" : "+"}${fmtMoney(Math.abs(variance))}` : "—"}
+                        </td>
+                      </tr>
+                      {isExpanded && breakdown.entries.map(([name, amt]) => (
+                        <tr key={`${r.name}-${name}`} style={{ fontSize: 12.5, color: "var(--ink-dim)" }}>
+                          <td style={{ paddingLeft: 34 }}>{name}</td>
+                          <td className="hbl-mono" style={{ textAlign: "right" }}>{fmtMoney(amt)}</td>
+                          <td></td>
+                          <td></td>
+                        </tr>
+                      ))}
+                      {isExpanded && breakdown.other > 0.004 && (
+                        <tr style={{ fontSize: 12.5, color: "var(--ink-dim)" }}>
+                          <td style={{ paddingLeft: 34 }}>Other {r.name}</td>
+                          <td className="hbl-mono" style={{ textAlign: "right" }}>{fmtMoney(breakdown.other)}</td>
+                          <td></td>
+                          <td></td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -979,6 +1040,42 @@ function TransactionsView({ transactions, categories, persistTransactions, userN
     return Array.from(set).sort().reverse();
   }, [transactions]);
 
+  const [sortField, setSortField] = useState("date");
+  const [sortDir, setSortDir] = useState("desc");
+
+  function toggleSort(field) {
+    if (sortField === field) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDir("asc");
+    }
+  }
+
+  function sortIndicator(field) {
+    if (sortField !== field) return "";
+    return sortDir === "asc" ? " ▲" : " ▼";
+  }
+
+  function compareField(a, b, field) {
+    switch (field) {
+      case "date":
+        return (a.date || "").localeCompare(b.date || "");
+      case "description":
+        return (a.description || "").toLowerCase().localeCompare((b.description || "").toLowerCase());
+      case "category":
+        return (a.category || "").toLowerCase().localeCompare((b.category || "").toLowerCase());
+      case "subcategory":
+        return (a.subcategory || "").toLowerCase().localeCompare((b.subcategory || "").toLowerCase());
+      case "source":
+        return (a.source || "").toLowerCase().localeCompare((b.source || "").toLowerCase());
+      case "amount":
+        return a.amount - b.amount;
+      default:
+        return 0;
+    }
+  }
+
   function handleCategorySelect(value, apply) {
     if (value === "__add__") {
       requestAddCategory(apply);
@@ -1006,8 +1103,11 @@ function TransactionsView({ transactions, categories, persistTransactions, userN
         return true;
       })
       .filter((t) => !search || t.description.toLowerCase().includes(search.toLowerCase()))
-      .sort((a, b) => (b.date > a.date ? 1 : a.date > b.date ? -1 : 0) || (b.createdAt || 0) - (a.createdAt || 0));
-  }, [transactions, search, filterCat, filterSub, periodMode, filterMonth, filterYear]);
+      .sort((a, b) => {
+        const cmp = compareField(a, b, sortField);
+        return sortDir === "asc" ? cmp : -cmp;
+      });
+  }, [transactions, search, filterCat, filterSub, periodMode, filterMonth, filterYear, sortField, sortDir]);
 
   function updateCategory(id, category) {
     persistTransactions(transactions.map((t) => (t.id === id ? { ...t, category, subcategory: "" } : t)));
@@ -1114,7 +1214,15 @@ function TransactionsView({ transactions, categories, persistTransactions, userN
           <div style={{ overflowX: "auto" }}>
             <table className="hbl-table">
               <thead>
-                <tr><th>Date</th><th>Description</th><th>Category</th><th>Subcategory</th><th>Source</th><th style={{ textAlign: "right" }}>Amount</th><th></th></tr>
+                <tr>
+                  <th className="hbl-th-sort" onClick={() => toggleSort("date")}>Date{sortIndicator("date")}</th>
+                  <th className="hbl-th-sort" onClick={() => toggleSort("description")}>Description{sortIndicator("description")}</th>
+                  <th className="hbl-th-sort" onClick={() => toggleSort("category")}>Category{sortIndicator("category")}</th>
+                  <th className="hbl-th-sort" onClick={() => toggleSort("subcategory")}>Subcategory{sortIndicator("subcategory")}</th>
+                  <th className="hbl-th-sort" onClick={() => toggleSort("source")}>Source{sortIndicator("source")}</th>
+                  <th className="hbl-th-sort" style={{ textAlign: "right" }} onClick={() => toggleSort("amount")}>Amount{sortIndicator("amount")}</th>
+                  <th></th>
+                </tr>
               </thead>
               <tbody>
                 {filtered.map((t) => {
@@ -1491,7 +1599,7 @@ function ImportView({ transactions, persistTransactions, userName, setToast, cat
 
 /* ---------------------------------- budgets ---------------------------------- */
 
-function BudgetsView({ categories, budgets, transactions, persistConfig, persistTransactions, requestAddSubcategory }) {
+function CategoriesView({ categories, budgets, transactions, persistConfig, persistTransactions, requestAddSubcategory }) {
   const [newCat, setNewCat] = useState("");
   const [colorIdx, setColorIdx] = useState(0);
   const [editing, setEditing] = useState(null);
@@ -1517,9 +1625,6 @@ function BudgetsView({ categories, budgets, transactions, persistConfig, persist
     return avg;
   }, [transactions]);
 
-  function setBudget(name, value) {
-    persistConfig(categories, { ...budgets, [name]: value === "" ? "" : Number(value) });
-  }
   function addCategory() {
     const name = newCat.trim();
     if (!name || categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) return;
@@ -1598,9 +1703,9 @@ function BudgetsView({ categories, budgets, transactions, persistConfig, persist
 
   return (
     <div className="hbl-card">
-      <div className="hbl-section-title">Monthly budgets</div>
+      <div className="hbl-section-title">Categories</div>
       <div style={{ fontSize: 12.5, color: "var(--ink-dim)", marginBottom: 14 }}>
-        Set what you want to spend per category each month. The 3-month average is shown as a guide. Use subcategories to track detail within a category without splitting its budget.
+        Rename, recolor, add, or delete categories and subcategories here. Set how much to budget for each on the Budgets tab.
       </div>
       {categories.map((c) => {
         const isEditing = editing === c.name;
@@ -1639,10 +1744,6 @@ function BudgetsView({ categories, budgets, transactions, persistConfig, persist
                   <span style={{ fontSize: 11, color: "var(--ink-dim)" }}>avg {fmtMoney(last3Avg[c.name])}/mo</span>
                 ) : null}
               </div>
-              <input
-                className="hbl-input hbl-mono" style={{ width: 110, textAlign: "right" }}
-                placeholder="0.00" value={budgets[c.name] ?? ""} onChange={(e) => setBudget(c.name, e.target.value)}
-              />
               <button className="hbl-btn hbl-btn-sm" onClick={() => startEdit(c)}><Pencil size={13} /></button>
               <button className="hbl-btn hbl-btn-sm hbl-btn-danger" onClick={() => removeCategory(c.name)}><Trash2 size={13} /></button>
             </div>
@@ -1699,6 +1800,63 @@ function BudgetsView({ categories, budgets, transactions, persistConfig, persist
         <input className="hbl-input" placeholder="New category name" value={newCat} onChange={(e) => setNewCat(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCategory()} />
         <button className="hbl-btn hbl-btn-primary" onClick={addCategory}><Plus size={14} /> Add category</button>
       </div>
+    </div>
+  );
+}
+
+function BudgetsView({ categories, budgets, transactions, persistConfig }) {
+  const last3Avg = useMemo(() => {
+    const now = new Date();
+    const months = [0, 1, 2].map((n) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - n, 1);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    });
+    const sums = {};
+    for (const t of transactions) {
+      if (t.amount <= 0 || !months.some((m) => t.date.startsWith(m))) continue;
+      sums[t.category] = (sums[t.category] || 0) + t.amount;
+    }
+    const avg = {};
+    for (const [k, v] of Object.entries(sums)) avg[k] = v / 3;
+    return avg;
+  }, [transactions]);
+
+  function setBudget(name, value) {
+    persistConfig(categories, { ...budgets, [name]: value === "" ? "" : Number(value) });
+  }
+
+  if (categories.length === 0) {
+    return (
+      <div className="hbl-card hbl-empty">
+        <Settings2 size={34} />
+        <div style={{ fontFamily: "var(--display-font)", fontSize: 17, color: "var(--ink)", marginBottom: 6 }}>No categories yet</div>
+        <div style={{ fontSize: 13.5 }}>Add some on the Categories tab first, then set budgets here.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="hbl-card">
+      <div className="hbl-section-title">Monthly budgets</div>
+      <div style={{ fontSize: 12.5, color: "var(--ink-dim)", marginBottom: 14 }}>
+        Set what you want to spend per category each month. The 3-month average is shown as a guide. To rename, recolor,
+        add, or delete categories and subcategories, use the Categories tab.
+      </div>
+      {categories.map((c) => (
+        <div key={c.name} className="hbl-row" style={{ padding: "10px 0", borderBottom: "1px dashed var(--border)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+            <span className="hbl-dot" style={{ background: c.color }} />
+            <span style={{ fontSize: 13.5 }}>{c.name}</span>
+            {last3Avg[c.name] ? (
+              <span style={{ fontSize: 11, color: "var(--ink-dim)" }}>avg {fmtMoney(last3Avg[c.name])}/mo</span>
+            ) : null}
+          </div>
+          <input
+            className="hbl-input hbl-mono" style={{ width: 110, textAlign: "right" }}
+            placeholder="0.00" value={budgets[c.name] ?? ""} onChange={(e) => setBudget(c.name, e.target.value)}
+          />
+        </div>
+      ))}
     </div>
   );
 }
