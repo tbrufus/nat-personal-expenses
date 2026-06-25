@@ -1118,6 +1118,15 @@ function TransactionsView({ transactions, categories, persistTransactions, userN
   function removeTx(id) {
     persistTransactions(transactions.filter((t) => t.id !== id));
   }
+  function flipSign(id) {
+    persistTransactions(transactions.map((t) => (t.id === id ? { ...t, amount: -t.amount } : t)));
+  }
+  const [confirmFlipAll, setConfirmFlipAll] = useState(false);
+  function bulkFlipSign() {
+    const ids = new Set(filtered.map((t) => t.id));
+    persistTransactions(transactions.map((t) => (ids.has(t.id) ? { ...t, amount: -t.amount } : t)));
+    setConfirmFlipAll(false);
+  }
   function addManual() {
     const amt = parseAmount(form.amount);
     const date = parseDateString(form.date);
@@ -1173,6 +1182,17 @@ function TransactionsView({ transactions, categories, persistTransactions, userN
             </select>
           )}
           <button className="hbl-btn" onClick={exportCSV}><Download size={14} /> Export</button>
+          {!confirmFlipAll ? (
+            <button className="hbl-btn" disabled={filtered.length === 0} onClick={() => setConfirmFlipAll(true)} title="Flip the sign of every entry currently shown by the filters above">
+              ± Flip shown ({filtered.length})
+            </button>
+          ) : (
+            <span className="hbl-pill" style={{ gap: 8, padding: "6px 10px" }}>
+              Flip all {filtered.length} shown?
+              <button className="hbl-btn hbl-btn-sm hbl-btn-primary" onClick={bulkFlipSign}>Yes, flip</button>
+              <button className="hbl-btn hbl-btn-sm" onClick={() => setConfirmFlipAll(false)}>Cancel</button>
+            </span>
+          )}
           <button className="hbl-btn hbl-btn-primary" onClick={() => setShowAdd(!showAdd)}><Plus size={14} /> Add entry</button>
         </div>
         <div style={{ marginTop: 10, fontSize: 12, color: "var(--ink-dim)" }}>
@@ -1248,7 +1268,10 @@ function TransactionsView({ transactions, categories, persistTransactions, userN
                       <td style={{ textAlign: "right" }} className={t.amount > 0 ? "hbl-amt-out" : "hbl-amt-in"}>
                         {t.amount > 0 ? "-" : "+"}{fmtMoney(Math.abs(t.amount))}
                       </td>
-                      <td><button className="hbl-btn hbl-btn-sm hbl-btn-danger" onClick={() => removeTx(t.id)}><Trash2 size={13} /></button></td>
+                      <td>
+                        <button className="hbl-btn hbl-btn-sm" title="Flip sign (expense ↔ income)" onClick={() => flipSign(t.id)}>±</button>
+                        <button className="hbl-btn hbl-btn-sm hbl-btn-danger" style={{ marginLeft: 4 }} onClick={() => removeTx(t.id)}><Trash2 size={13} /></button>
+                      </td>
                     </tr>
                   );
                 })}
