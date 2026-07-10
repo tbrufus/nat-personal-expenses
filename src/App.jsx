@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid,
 } from "recharts";
 import { auth } from "./firebase";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
@@ -805,6 +806,7 @@ function SummaryView({ transactions, categories, budgets }) {
   const [mode, setMode] = useState("month");
   const [month, setMonth] = useState(thisMonth());
   const [year, setYear] = useState(String(new Date().getFullYear()));
+  const [compareSpan, setCompareSpan] = useState(6);
 
   const availableYears = useMemo(() => {
     const set = new Set(transactions.map((t) => (t.date || "").slice(0, 4)).filter(Boolean));
@@ -883,7 +885,50 @@ function SummaryView({ transactions, categories, budgets }) {
     });
   }, [mode, year, transactions]);
 
-  const periodLabel = mode === "month" ? `in ${fmtMonthLabel(month)}` : mode === "year" ? `for all of ${year}` : `year to date (${year})`;
+  const compareMonths = useMemo(() => {
+    if (mode !== "compare") return [];
+    const anchor = new Date();
+    const list = [];
+    for (let i = compareSpan - 1; i >= 0; i--) {
+      const d = new Date(anchor.getFullYear(), anchor.getMonth() - i, 1);
+      list.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    }
+    return list;
+  }, [mode, compareSpan]);
+
+  const compareData = useMemo(() => {
+    if (mode !== "compare") return { months: [], rows: [], totals: {} };
+    const totals = {};
+    const byCatByMonth = {};
+    for (const m of compareMonths) {
+      totals[m] = 0;
+      byCatByMonth[m] = {};
+    }
+    for (const t of transactions) {
+      if (t.amount <= 0 || !t.date) continue;
+      const m = t.date.slice(0, 7);
+      if (!(m in totals)) continue;
+      totals[m] += t.amount;
+      byCatByMonth[m][t.category] = (byCatByMonth[m][t.category] || 0) + t.amount;
+    }
+    const catNames = categories.map((c) => c.name);
+    const seen = new Set(catNames);
+    for (const m of compareMonths) {
+      for (const cn of Object.keys(byCatByMonth[m])) seen.add(cn);
+    }
+    const rows = Array.from(seen)
+      .map((name) => {
+        const cat = categories.find((c) => c.name === name);
+        const byMonth = compareMonths.map((m) => byCatByMonth[m][name] || 0);
+        const rowTotal = byMonth.reduce((s, v) => s + v, 0);
+        return { name, color: (cat && cat.color) || "#7A8B99", byMonth, rowTotal };
+      })
+      .filter((r) => r.rowTotal > 0)
+      .sort((a, b) => b.rowTotal - a.rowTotal);
+    return { months: compareMonths, rows, totals };
+  }, [mode, compareMonths, transactions, categories]);
+
+  const periodLabel = mode === "month" ? `in ${fmtMonthLabel(month)}` : mode === "year" ? `for all of ${year}` : mode === "compare" ? `over the last ${compareSpan} months` : `year to date (${year})`;
 
   function exportSummaryCSV() {
     const header = ["Category", "Spent", "Budget", "Variance"];
@@ -917,18 +962,29 @@ function SummaryView({ transactions, categories, budgets }) {
             <button className={`hbl-segment-btn ${mode === "month" ? "active" : ""}`} onClick={() => setMode("month")}>Month</button>
             <button className={`hbl-segment-btn ${mode === "ytd" ? "active" : ""}`} onClick={() => setMode("ytd")}>Year to Date</button>
             <button className={`hbl-segment-btn ${mode === "year" ? "active" : ""}`} onClick={() => setMode("year")}>Year</button>
+            <button className={`hbl-segment-btn ${mode === "compare" ? "active" : ""}`} onClick={() => setMode("compare")}>Compare Months</button>
           </div>
           {mode === "month" ? (
             <input type="month" className="hbl-input" style={{ width: 170 }} value={month} onChange={(e) => setMonth(e.target.value)} />
+          ) : mode === "compare" ? (
+            <select className="hbl-select" style={{ width: 150 }} value={compareSpan} onChange={(e) => setCompareSpan(Number(e.target.value))}>
+              <option value={3}>Last 3 months</option>
+              <option value={6}>Last 6 months</option>
+              <option value={12}>Last 12 months</option>
+            </select>
           ) : (
             <select className="hbl-select" style={{ width: 100 }} value={year} onChange={(e) => setYear(e.target.value)}>
               {availableYears.map((y) => <option key={y} value={y}>{y}</option>)}
             </select>
           )}
         </div>
-        <button className="hbl-btn" onClick={exportSummaryCSV}><Download size={14} /> Export</button>
+        {mode !== "compare" && <button className="hbl-btn" onClick={exportSummaryCSV}><Download size={14} /> Export</button>}
       </div>
 
+      {mode === "compare" ? (
+        <CompareMonthsView compareData={compareData} />
+      ) : (
+        <>
       <div className="hbl-card" style={{ marginBottom: 16 }}>
         <div className="hbl-totalbar">
           <Seal pct={overallPct} size={72} />
@@ -1020,6 +1076,84 @@ function SummaryView({ transactions, categories, budgets }) {
           </div>
         </div>
       )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function CompareMonthsView({ compareData }) {
+  const { months, rows, totals } = compareData;
+  const grandTotal = months.reduce((s, m) => s + (totals[m] || 0), 0);
+  const chartData = months.map((m) => ({ label: fmtMonthLabel(m).split(" ")[0] + " " + fmtMonthLabel(m).split(" ")[1].slice(2), total: totals[m] || 0 }));
+
+  if (months.length === 0 || grandTotal === 0) {
+    return (
+      <div className="hbl-card hbl-empty">
+        <BarChart3 size={34} />
+        <div style={{ fontFamily: "var(--display-font)", fontSize: 17, color: "var(--ink)", marginBottom: 6 }}>Nothing to compare yet</div>
+        <div style={{ fontSize: 13.5 }}>Import or add entries across a few months to see them compared here.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="hbl-card" style={{ marginBottom: 16 }}>
+        <div className="hbl-section-title">Total spend by month</div>
+        <div style={{ width: "100%", height: 220 }}>
+          <ResponsiveContainer>
+            <BarChart data={chartData} margin={{ top: 4, right: 8, left: 8, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+              <XAxis dataKey="label" tick={{ fill: "#9FB0BD", fontSize: 11 }} axisLine={{ stroke: "rgba(255,255,255,0.1)" }} tickLine={false} />
+              <YAxis tick={{ fill: "#9FB0BD", fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${v >= 1000 ? `${Math.round(v / 1000)}k` : v}`} />
+              <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ background: "#1C2A37", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#EFEBE1", fontSize: 12 }} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+              <Bar dataKey="total" fill="var(--gold)" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className="hbl-card">
+        <div className="hbl-section-title">By category, month by month</div>
+        {rows.length === 0 ? (
+          <div className="hbl-empty" style={{ padding: "20px 0" }}>No spending recorded across these months.</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="hbl-table">
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  {months.map((m) => <th key={m} style={{ textAlign: "right", whiteSpace: "nowrap" }}>{fmtMonthLabel(m).split(" ")[0]}</th>)}
+                  <th style={{ textAlign: "right" }}>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.name}>
+                    <td><span className="hbl-dot" style={{ background: r.color, marginRight: 7 }} />{r.name}</td>
+                    {r.byMonth.map((v, i) => (
+                      <td key={months[i]} className="hbl-mono" style={{ textAlign: "right", color: v > 0 ? "var(--ink)" : "var(--ink-dim)" }}>
+                        {v > 0 ? fmtMoney(v) : "—"}
+                      </td>
+                    ))}
+                    <td className="hbl-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(r.rowTotal)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop: "1px solid var(--border)" }}>
+                  <td style={{ fontWeight: 600, paddingTop: 10 }}>Total</td>
+                  {months.map((m) => (
+                    <td key={m} className="hbl-mono" style={{ textAlign: "right", fontWeight: 600, paddingTop: 10 }}>{fmtMoney(totals[m] || 0)}</td>
+                  ))}
+                  <td className="hbl-mono" style={{ textAlign: "right", fontWeight: 600, paddingTop: 10 }}>{fmtMoney(grandTotal)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
