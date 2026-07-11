@@ -17,18 +17,19 @@ import { subscribeDoc, saveDoc } from "./storage";
 /* ---------------------------------- helpers ---------------------------------- */
 
 const DEFAULT_CATEGORIES = [
-  { name: "Housing", color: "#D4A24E" },
-  { name: "Groceries", color: "#4F9D69" },
-  { name: "Dining Out", color: "#E0654F" },
-  { name: "Transportation", color: "#6FA8DC" },
-  { name: "Utilities", color: "#B07CD0" },
-  { name: "Subscriptions", color: "#F2B134" },
-  { name: "Health", color: "#5DD39E" },
-  { name: "Shopping", color: "#EF8354" },
-  { name: "Entertainment", color: "#9D8DF1" },
-  { name: "Pets", color: "#7FB3D5" },
-  { name: "Travel", color: "#E8A0BF" },
-  { name: "Uncategorized", color: "#7A8B99" },
+  { name: "Income", color: "#3FA7A0", group: "income" },
+  { name: "Housing", color: "#D4A24E", group: "expense" },
+  { name: "Groceries", color: "#4F9D69", group: "expense" },
+  { name: "Dining Out", color: "#E0654F", group: "expense" },
+  { name: "Transportation", color: "#6FA8DC", group: "expense" },
+  { name: "Utilities", color: "#B07CD0", group: "expense" },
+  { name: "Subscriptions", color: "#F2B134", group: "expense" },
+  { name: "Health", color: "#5DD39E", group: "expense" },
+  { name: "Shopping", color: "#EF8354", group: "expense" },
+  { name: "Entertainment", color: "#9D8DF1", group: "expense" },
+  { name: "Pets", color: "#7FB3D5", group: "expense" },
+  { name: "Travel", color: "#E8A0BF", group: "expense" },
+  { name: "Uncategorized", color: "#7A8B99", group: "expense" },
 ];
 
 const KEYWORD_MAP = {
@@ -103,6 +104,14 @@ function fmtDate(iso) {
 function fmtMoney(n) {
   const v = Number(n) || 0;
   return v.toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
+
+function catGroup(cat) {
+  return cat && cat.group === "income" ? "income" : "expense";
+}
+
+function groupOf(categories, name) {
+  return catGroup(categories.find((c) => c.name === name));
 }
 
 function thisMonth() {
@@ -480,7 +489,7 @@ function LedgerApp({ user }) {
         finalName = existing.name;
       } else {
         const color = PALETTE[categories.length % PALETTE.length];
-        persistConfig([...categories, { name, color, subcategories: [] }], budgets);
+        persistConfig([...categories, { name, color, group: "expense", subcategories: [] }], budgets);
       }
       if (categoryModal.callback) categoryModal.callback(finalName);
     }
@@ -802,6 +811,67 @@ function Dashboard({
 
 /* ---------------------------------- summary ---------------------------------- */
 
+function SummaryCategoryTable({ rows, subBreakdownByCategory, expandedCat, setExpandedCat, spentLabel, emptyText }) {
+  if (rows.length === 0) {
+    return <div className="hbl-empty" style={{ padding: "20px 0" }}>{emptyText}</div>;
+  }
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table className="hbl-table">
+        <thead>
+          <tr><th>Category</th><th style={{ textAlign: "right" }}>{spentLabel}</th><th style={{ textAlign: "right" }}>Budget</th><th style={{ textAlign: "right" }}>Variance</th></tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const variance = r.budget - r.spent;
+            const breakdown = subBreakdownByCategory[r.name] || { entries: [], other: 0 };
+            const hasSubs = breakdown.entries.length > 0;
+            const isExpanded = expandedCat === r.name;
+            return (
+              <Fragment key={r.name}>
+                <tr>
+                  <td>
+                    {hasSubs && (
+                      <button
+                        className="hbl-subtoggle" style={{ marginRight: 4 }}
+                        onClick={() => setExpandedCat(isExpanded ? null : r.name)}
+                      >
+                        <ChevronRight size={12} style={{ transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
+                      </button>
+                    )}
+                    <span className="hbl-dot" style={{ background: r.color, marginRight: 7 }} />{r.name}
+                  </td>
+                  <td className="hbl-mono" style={{ textAlign: "right" }}>{fmtMoney(r.spent)}</td>
+                  <td className="hbl-mono" style={{ textAlign: "right", color: "var(--ink-dim)" }}>{r.budget > 0 ? fmtMoney(r.budget) : "—"}</td>
+                  <td className={`hbl-mono ${r.budget > 0 ? (variance < 0 ? "hbl-amt-out" : "hbl-amt-in") : ""}`} style={{ textAlign: "right" }}>
+                    {r.budget > 0 ? `${variance < 0 ? "-" : "+"}${fmtMoney(Math.abs(variance))}` : "—"}
+                  </td>
+                </tr>
+                {isExpanded && breakdown.entries.map(([name, amt]) => (
+                  <tr key={`${r.name}-${name}`} style={{ fontSize: 12.5, color: "var(--ink-dim)" }}>
+                    <td style={{ paddingLeft: 34 }}>{name}</td>
+                    <td className="hbl-mono" style={{ textAlign: "right" }}>{fmtMoney(amt)}</td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                ))}
+                {isExpanded && breakdown.other > 0.004 && (
+                  <tr style={{ fontSize: 12.5, color: "var(--ink-dim)" }}>
+                    <td style={{ paddingLeft: 34 }}>Other {r.name}</td>
+                    <td className="hbl-mono" style={{ textAlign: "right" }}>{fmtMoney(breakdown.other)}</td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function SummaryView({ transactions, categories, budgets }) {
   const [mode, setMode] = useState("month");
   const [month, setMonth] = useState(thisMonth());
@@ -827,7 +897,14 @@ function SummaryView({ transactions, categories, budgets }) {
     return year < currentYear ? 12 : 0;
   }, [mode, year]);
 
-  const totalSpent = useMemo(() => activeTx.reduce((s, t) => s + (t.amount > 0 ? t.amount : 0), 0), [activeTx]);
+  const totalSpent = useMemo(
+    () => activeTx.reduce((s, t) => (groupOf(categories, t.category) === "expense" && t.amount > 0 ? s + t.amount : s), 0),
+    [activeTx, categories]
+  );
+  const totalIncome = useMemo(
+    () => activeTx.reduce((s, t) => (groupOf(categories, t.category) === "income" && t.amount < 0 ? s - t.amount : s), 0),
+    [activeTx, categories]
+  );
   const totalBudget = useMemo(
     () => Object.values(budgets).reduce((s, v) => s + (Number(v) || 0), 0) * monthsForBudget,
     [budgets, monthsForBudget]
@@ -837,37 +914,48 @@ function SummaryView({ transactions, categories, budgets }) {
   const byCategory = useMemo(() => {
     const map = {};
     for (const t of activeTx) {
-      if (t.amount <= 0) continue;
-      map[t.category] = (map[t.category] || 0) + t.amount;
+      const isIncome = groupOf(categories, t.category) === "income";
+      if (isIncome) {
+        if (t.amount >= 0) continue;
+        map[t.category] = (map[t.category] || 0) - t.amount;
+      } else {
+        if (t.amount <= 0) continue;
+        map[t.category] = (map[t.category] || 0) + t.amount;
+      }
     }
     return map;
-  }, [activeTx]);
+  }, [activeTx, categories]);
 
   const categoryRows = useMemo(() => {
     return categories
       .map((c) => ({
         name: c.name,
         color: c.color,
+        group: catGroup(c),
         spent: byCategory[c.name] || 0,
         budget: (Number(budgets[c.name]) || 0) * monthsForBudget,
       }))
-      .filter((r) => r.spent > 0 || r.budget > 0)
       .sort((a, b) => b.spent - a.spent);
   }, [categories, byCategory, budgets, monthsForBudget]);
+
+  const incomeRows = useMemo(() => categoryRows.filter((r) => r.group === "income"), [categoryRows]);
+  const expenseRows = useMemo(() => categoryRows.filter((r) => r.group !== "income"), [categoryRows]);
 
   const [expandedCat, setExpandedCat] = useState(null);
 
   const subBreakdownByCategory = useMemo(() => {
     const map = {};
     for (const c of categories) {
-      const txForCat = activeTx.filter((t) => t.category === c.name && t.amount > 0);
+      const isIncome = catGroup(c) === "income";
+      const txForCat = activeTx.filter((t) => t.category === c.name && (isIncome ? t.amount < 0 : t.amount > 0));
       const bySub = {};
       for (const t of txForCat) {
         if (!t.subcategory || !t.subcategory.trim()) continue;
-        bySub[t.subcategory] = (bySub[t.subcategory] || 0) + t.amount;
+        const val = isIncome ? -t.amount : t.amount;
+        bySub[t.subcategory] = (bySub[t.subcategory] || 0) + val;
       }
       const entries = Object.entries(bySub).sort((a, b) => b[1] - a[1]);
-      const total = txForCat.reduce((s, t) => s + t.amount, 0);
+      const total = txForCat.reduce((s, t) => s + (isIncome ? -t.amount : t.amount), 0);
       const other = total - entries.reduce((s, [, v]) => s + v, 0);
       map[c.name] = { entries, other };
     }
@@ -879,11 +967,11 @@ function SummaryView({ transactions, categories, budgets }) {
     return Array.from({ length: 12 }, (_, i) => {
       const m = `${year}-${String(i + 1).padStart(2, "0")}`;
       const total = transactions
-        .filter((t) => t.date && t.date.startsWith(m) && t.amount > 0)
+        .filter((t) => t.date && t.date.startsWith(m) && t.amount > 0 && groupOf(categories, t.category) === "expense")
         .reduce((s, t) => s + t.amount, 0);
       return { month: m, label: fmtMonthLabel(m).split(" ")[0], total };
     });
-  }, [mode, year, transactions]);
+  }, [mode, year, transactions, categories]);
 
   const compareMonths = useMemo(() => {
     if (mode !== "compare") return [];
@@ -906,6 +994,7 @@ function SummaryView({ transactions, categories, budgets }) {
     }
     for (const t of transactions) {
       if (t.amount <= 0 || !t.date) continue;
+      if (groupOf(categories, t.category) === "income") continue;
       const m = t.date.slice(0, 7);
       if (!(m in totals)) continue;
       totals[m] += t.amount;
@@ -986,76 +1075,44 @@ function SummaryView({ transactions, categories, budgets }) {
       ) : (
         <>
       <div className="hbl-card" style={{ marginBottom: 16 }}>
-        <div className="hbl-totalbar">
-          <Seal pct={overallPct} size={72} />
-          <div>
-            <div className="hbl-total-num hbl-mono">{fmtMoney(totalSpent)}</div>
-            <div className="hbl-total-label">
-              Spent {periodLabel}{totalBudget > 0 ? ` · budgeted ${fmtMoney(totalBudget)}` : " · no budget set"}
+        <div className="hbl-row" style={{ flexWrap: "wrap", gap: 24 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div className="hbl-seal" style={{ borderColor: "var(--green)", color: "var(--green)", width: 60, height: 60 }}>
+              <ArrowRight size={20} style={{ transform: "rotate(-45deg)" }} />
+            </div>
+            <div>
+              <div className="hbl-total-num hbl-mono" style={{ fontSize: 26, color: "var(--green)" }}>{fmtMoney(totalIncome)}</div>
+              <div className="hbl-total-label">Income {periodLabel}</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <Seal pct={overallPct} size={60} />
+            <div>
+              <div className="hbl-total-num hbl-mono" style={{ fontSize: 26 }}>{fmtMoney(totalSpent)}</div>
+              <div className="hbl-total-label">
+                Spent {periodLabel}{totalBudget > 0 ? ` · budgeted ${fmtMoney(totalBudget)}` : " · no budget set"}
+              </div>
             </div>
           </div>
         </div>
       </div>
 
       <div className="hbl-card" style={{ marginBottom: 16 }}>
-        <div className="hbl-section-title">By category</div>
-        {categoryRows.length === 0 ? (
-          <div className="hbl-empty" style={{ padding: "20px 0" }}>No spending recorded for this period.</div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="hbl-table">
-              <thead>
-                <tr><th>Category</th><th style={{ textAlign: "right" }}>Spent</th><th style={{ textAlign: "right" }}>Budget</th><th style={{ textAlign: "right" }}>Variance</th></tr>
-              </thead>
-              <tbody>
-                {categoryRows.map((r) => {
-                  const variance = r.budget - r.spent;
-                  const breakdown = subBreakdownByCategory[r.name] || { entries: [], other: 0 };
-                  const hasSubs = breakdown.entries.length > 0;
-                  const isExpanded = expandedCat === r.name;
-                  return (
-                    <Fragment key={r.name}>
-                      <tr>
-                        <td>
-                          {hasSubs && (
-                            <button
-                              className="hbl-subtoggle" style={{ marginRight: 4 }}
-                              onClick={() => setExpandedCat(isExpanded ? null : r.name)}
-                            >
-                              <ChevronRight size={12} style={{ transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
-                            </button>
-                          )}
-                          <span className="hbl-dot" style={{ background: r.color, marginRight: 7 }} />{r.name}
-                        </td>
-                        <td className="hbl-mono" style={{ textAlign: "right" }}>{fmtMoney(r.spent)}</td>
-                        <td className="hbl-mono" style={{ textAlign: "right", color: "var(--ink-dim)" }}>{r.budget > 0 ? fmtMoney(r.budget) : "—"}</td>
-                        <td className={`hbl-mono ${r.budget > 0 ? (variance < 0 ? "hbl-amt-out" : "hbl-amt-in") : ""}`} style={{ textAlign: "right" }}>
-                          {r.budget > 0 ? `${variance < 0 ? "-" : "+"}${fmtMoney(Math.abs(variance))}` : "—"}
-                        </td>
-                      </tr>
-                      {isExpanded && breakdown.entries.map(([name, amt]) => (
-                        <tr key={`${r.name}-${name}`} style={{ fontSize: 12.5, color: "var(--ink-dim)" }}>
-                          <td style={{ paddingLeft: 34 }}>{name}</td>
-                          <td className="hbl-mono" style={{ textAlign: "right" }}>{fmtMoney(amt)}</td>
-                          <td></td>
-                          <td></td>
-                        </tr>
-                      ))}
-                      {isExpanded && breakdown.other > 0.004 && (
-                        <tr style={{ fontSize: 12.5, color: "var(--ink-dim)" }}>
-                          <td style={{ paddingLeft: 34 }}>Other {r.name}</td>
-                          <td className="hbl-mono" style={{ textAlign: "right" }}>{fmtMoney(breakdown.other)}</td>
-                          <td></td>
-                          <td></td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <div className="hbl-section-title">Income</div>
+        <SummaryCategoryTable
+          rows={incomeRows} subBreakdownByCategory={subBreakdownByCategory}
+          expandedCat={expandedCat} setExpandedCat={setExpandedCat}
+          spentLabel="Received" emptyText="No income categories yet — add one on the Categories tab and mark it as Income."
+        />
+      </div>
+
+      <div className="hbl-card" style={{ marginBottom: 16 }}>
+        <div className="hbl-section-title">Expenses</div>
+        <SummaryCategoryTable
+          rows={expenseRows} subBreakdownByCategory={subBreakdownByCategory}
+          expandedCat={expandedCat} setExpandedCat={setExpandedCat}
+          spentLabel="Spent" emptyText="No spending recorded for this period."
+        />
       </div>
 
       {mode === "year" && (
@@ -1786,7 +1843,7 @@ function CategoriesView({ categories, budgets, transactions, persistConfig, pers
     const name = newCat.trim();
     if (!name || categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) return;
     const color = PALETTE[colorIdx % PALETTE.length];
-    persistConfig([...categories, { name, color, subcategories: [] }], budgets);
+    persistConfig([...categories, { name, color, group: "expense", subcategories: [] }], budgets);
     setNewCat("");
     setColorIdx(colorIdx + 1);
   }
@@ -1844,7 +1901,7 @@ function CategoriesView({ categories, budgets, transactions, persistConfig, pers
     const dupe = newName.toLowerCase() !== c.name.toLowerCase() &&
       categories.some((cc) => cc.name.toLowerCase() === newName.toLowerCase());
     if (dupe) return;
-    const nextCats = categories.map((cc) => (cc.name === c.name ? { name: newName, color: editColor, subcategories: c.subcategories || [] } : cc));
+    const nextCats = categories.map((cc) => (cc.name === c.name ? { name: newName, color: editColor, group: c.group, subcategories: c.subcategories || [] } : cc));
     const nextBudgets = { ...budgets };
     if (newName !== c.name && c.name in nextBudgets) {
       nextBudgets[newName] = nextBudgets[c.name];
@@ -1856,6 +1913,11 @@ function CategoriesView({ categories, budgets, transactions, persistConfig, pers
       persistTransactions(nextTx);
     }
     cancelEdit();
+  }
+
+  function setCategoryGroup(name, group) {
+    const nextCats = categories.map((c) => (c.name === name ? { ...c, group } : c));
+    persistConfig(nextCats, budgets);
   }
 
   return (
@@ -1900,6 +1962,21 @@ function CategoriesView({ categories, budgets, transactions, persistConfig, pers
                 {last3Avg[c.name] ? (
                   <span style={{ fontSize: 11, color: "var(--ink-dim)" }}>avg {fmtMoney(last3Avg[c.name])}/mo</span>
                 ) : null}
+              </div>
+              <div className="hbl-segment">
+                <button
+                  className={`hbl-segment-btn ${catGroup(c) === "income" ? "active" : ""}`}
+                  style={catGroup(c) === "income" ? { background: "var(--green)", color: "#0E1A13" } : undefined}
+                  onClick={() => setCategoryGroup(c.name, "income")}
+                >
+                  Income
+                </button>
+                <button
+                  className={`hbl-segment-btn ${catGroup(c) !== "income" ? "active" : ""}`}
+                  onClick={() => setCategoryGroup(c.name, "expense")}
+                >
+                  Expense
+                </button>
               </div>
               <button className="hbl-btn hbl-btn-sm" onClick={() => startEdit(c)}><Pencil size={13} /></button>
               <button className="hbl-btn hbl-btn-sm hbl-btn-danger" onClick={() => removeCategory(c.name)}><Trash2 size={13} /></button>
