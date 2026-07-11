@@ -1293,11 +1293,19 @@ function TransactionsView({ transactions, categories, persistTransactions, userN
     apply(value);
   }
 
-  const subsForFilter = filterCat ? ((categories.find((c) => c.name === filterCat) || {}).subcategories || []) : [];
+  const subsForFilter = filterCat && filterCat !== "__unmatched__" ? ((categories.find((c) => c.name === filterCat) || {}).subcategories || []) : [];
+  const unmatchedCount = useMemo(
+    () => transactions.filter((t) => t.category && !categories.some((c) => normCatName(c.name) === normCatName(t.category))).length,
+    [transactions, categories]
+  );
 
   const filtered = useMemo(() => {
     return transactions
-      .filter((t) => !filterCat || t.category === filterCat)
+      .filter((t) => {
+        if (!filterCat) return true;
+        if (filterCat === "__unmatched__") return t.category && !categories.some((c) => normCatName(c.name) === normCatName(t.category));
+        return t.category === filterCat;
+      })
       .filter((t) => !filterSub || t.subcategory === filterSub)
       .filter((t) => {
         if (periodMode === "month") return (t.date || "").startsWith(filterMonth);
@@ -1309,7 +1317,7 @@ function TransactionsView({ transactions, categories, persistTransactions, userN
         const cmp = compareField(a, b, sortField);
         return sortDir === "asc" ? cmp : -cmp;
       });
-  }, [transactions, search, filterCat, filterSub, periodMode, filterMonth, filterYear, sortField, sortDir]);
+  }, [transactions, search, filterCat, filterSub, periodMode, filterMonth, filterYear, sortField, sortDir, categories]);
 
   function updateCategory(id, category) {
     persistTransactions(transactions.map((t) => (t.id === id ? { ...t, category, subcategory: "" } : t)));
@@ -1362,6 +1370,7 @@ function TransactionsView({ transactions, categories, persistTransactions, userN
           </div>
           <select className="hbl-select" style={{ width: 160 }} value={filterCat} onChange={(e) => { setFilterCat(e.target.value); setFilterSub(""); }}>
             <option value="">All categories</option>
+            {unmatchedCount > 0 && <option value="__unmatched__">⚠ Unmatched ({unmatchedCount})</option>}
             {categories.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
           </select>
           {subsForFilter.length > 0 && (
@@ -1448,13 +1457,22 @@ function TransactionsView({ transactions, categories, persistTransactions, userN
               </thead>
               <tbody>
                 {filtered.map((t) => {
-                  const subs = (categories.find((c) => c.name === t.category) || {}).subcategories || [];
+                  const catMatch = categories.find((c) => normCatName(c.name) === normCatName(t.category));
+                  const subs = (catMatch || {}).subcategories || [];
+                  const isUnmatched = t.category && !catMatch;
                   return (
                     <tr key={t.id}>
                       <td className="hbl-mono" style={{ whiteSpace: "nowrap" }}>{fmtDate(t.date)}</td>
                       <td>{t.description}</td>
                       <td>
-                        <select className="hbl-select" style={{ padding: "4px 6px", fontSize: 12 }} value={t.category} onChange={(e) => handleCategorySelect(e.target.value, (cat) => updateCategory(t.id, cat))}>
+                        <select
+                          className="hbl-select"
+                          style={{ padding: "4px 6px", fontSize: 12, ...(isUnmatched ? { border: "1px solid var(--coral)", color: "var(--coral)" } : {}) }}
+                          value={t.category}
+                          onChange={(e) => handleCategorySelect(e.target.value, (cat) => updateCategory(t.id, cat))}
+                          title={isUnmatched ? `"${t.category}" doesn't match any current category — pick one to fix it` : undefined}
+                        >
+                          {isUnmatched && <option value={t.category}>⚠ {t.category} (unmatched)</option>}
                           {categories.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
                           <option value="__add__">+ Add new category…</option>
                         </select>
