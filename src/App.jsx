@@ -911,7 +911,7 @@ function SummaryView({ transactions, categories, budgets }) {
     [activeTx, categories]
   );
   const totalIncome = useMemo(
-    () => activeTx.reduce((s, t) => (groupOf(categories, t.category) === "income" && t.amount < 0 ? s - t.amount : s), 0),
+    () => activeTx.reduce((s, t) => (groupOf(categories, t.category) === "income" ? s + Math.abs(t.amount) : s), 0),
     [activeTx, categories]
   );
   const totalBudget = useMemo(
@@ -927,8 +927,7 @@ function SummaryView({ transactions, categories, budgets }) {
       const canonicalName = cat ? cat.name : t.category;
       const isIncome = catGroup(cat) === "income";
       if (isIncome) {
-        if (t.amount >= 0) continue;
-        map[canonicalName] = (map[canonicalName] || 0) - t.amount;
+        map[canonicalName] = (map[canonicalName] || 0) + Math.abs(t.amount);
       } else {
         if (t.amount <= 0) continue;
         map[canonicalName] = (map[canonicalName] || 0) + t.amount;
@@ -958,15 +957,15 @@ function SummaryView({ transactions, categories, budgets }) {
     const map = {};
     for (const c of categories) {
       const isIncome = catGroup(c) === "income";
-      const txForCat = activeTx.filter((t) => normCatName(t.category) === normCatName(c.name) && (isIncome ? t.amount < 0 : t.amount > 0));
+      const txForCat = activeTx.filter((t) => normCatName(t.category) === normCatName(c.name) && (isIncome ? true : t.amount > 0));
       const bySub = {};
       for (const t of txForCat) {
         if (!t.subcategory || !t.subcategory.trim()) continue;
-        const val = isIncome ? -t.amount : t.amount;
+        const val = isIncome ? Math.abs(t.amount) : t.amount;
         bySub[t.subcategory] = (bySub[t.subcategory] || 0) + val;
       }
       const entries = Object.entries(bySub).sort((a, b) => b[1] - a[1]);
-      const total = txForCat.reduce((s, t) => s + (isIncome ? -t.amount : t.amount), 0);
+      const total = txForCat.reduce((s, t) => s + (isIncome ? Math.abs(t.amount) : t.amount), 0);
       const other = total - entries.reduce((s, [, v]) => s + v, 0);
       map[c.name] = { entries, other };
     }
