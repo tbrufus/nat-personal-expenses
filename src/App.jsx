@@ -110,8 +110,17 @@ function catGroup(cat) {
   return cat && cat.group === "income" ? "income" : "expense";
 }
 
+function normCatName(s) {
+  return (s || "").trim().toLowerCase();
+}
+
+function findCategory(categories, name) {
+  const n = normCatName(name);
+  return categories.find((c) => normCatName(c.name) === n);
+}
+
 function groupOf(categories, name) {
-  return catGroup(categories.find((c) => c.name === name));
+  return catGroup(findCategory(categories, name));
 }
 
 function thisMonth() {
@@ -914,13 +923,15 @@ function SummaryView({ transactions, categories, budgets }) {
   const byCategory = useMemo(() => {
     const map = {};
     for (const t of activeTx) {
-      const isIncome = groupOf(categories, t.category) === "income";
+      const cat = findCategory(categories, t.category);
+      const canonicalName = cat ? cat.name : t.category;
+      const isIncome = catGroup(cat) === "income";
       if (isIncome) {
         if (t.amount >= 0) continue;
-        map[t.category] = (map[t.category] || 0) - t.amount;
+        map[canonicalName] = (map[canonicalName] || 0) - t.amount;
       } else {
         if (t.amount <= 0) continue;
-        map[t.category] = (map[t.category] || 0) + t.amount;
+        map[canonicalName] = (map[canonicalName] || 0) + t.amount;
       }
     }
     return map;
@@ -947,7 +958,7 @@ function SummaryView({ transactions, categories, budgets }) {
     const map = {};
     for (const c of categories) {
       const isIncome = catGroup(c) === "income";
-      const txForCat = activeTx.filter((t) => t.category === c.name && (isIncome ? t.amount < 0 : t.amount > 0));
+      const txForCat = activeTx.filter((t) => normCatName(t.category) === normCatName(c.name) && (isIncome ? t.amount < 0 : t.amount > 0));
       const bySub = {};
       for (const t of txForCat) {
         if (!t.subcategory || !t.subcategory.trim()) continue;
